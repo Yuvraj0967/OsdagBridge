@@ -125,7 +125,12 @@ class PlateGirderIFCExtractor:
             "cross_bracings": self._extract_cross_bracings(n_girders, spacing),
             "deck_slab": self._extract_deck_slab(total_width),
             "crash_barriers": self._extract_safety_components(total_width, actual_base_width, actual_railing_width),
-            "supports": self._extract_supports(n_girders, spacing)
+            "supports": self._extract_supports(n_girders, spacing),
+            # Parametric substructure layout produced by
+            # core.bridge_components.sub_structure.assembly.  Kept as plain
+            # dictionaries because the substructure already carries its own
+            # dimensions, origins and bar descriptors.
+            "substructure": getattr(self.cad, "substructure_layout", None) or {},
         }
 
     def _solve_girder_layout(self, total_width):

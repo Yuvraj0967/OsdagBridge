@@ -47,6 +47,9 @@ from osdagbridge.core.bridge_components.super_structure.median.builder import (
 from osdagbridge.core.bridge_components.super_structure.cross_bracing.builder import (
     build_cross_bracings
 )
+from osdagbridge.core.bridge_components.sub_structure.assembly import (
+    SubstructureParameters, build_substructure
+)
 
 from osdagbridge.core.bridge_types.plate_girder.dto import (
     BridgeParametersDTO,
@@ -60,6 +63,8 @@ KEY_CAD_DECK = "Deck"
 KEY_CAD_CRASH_BARRIER = "Crash Barrier"
 KEY_CAD_RAILING = "Railing"
 KEY_CAD_MEDIAN = "Median"
+KEY_CAD_SUBSTRUCTURE = "Substructure"
+KEY_CAD_REBAR = "Rebar"
 KEY_MODULE_PG = "Plate Girder"
 
 
@@ -137,6 +142,12 @@ class PlateGirderCADGenerator:
         self.display = None
         self.cad_widget = None
         self.component = None
+
+        # Parametric substructure dimensions (mm).  Kept on the generator so
+        # the IFC extractor and the CAD viewer read exactly the same values.
+        self.substructure_params = SubstructureParameters()
+        self.substructure_layout = None
+        self.substructure_summary = None
 
     def _set_parameters(self, design_params: BridgeParametersDTO):
         # MATERIAL GRADES
@@ -883,7 +894,33 @@ class PlateGirderCADGenerator:
             skew_angle=self.skew_angle
         )
 
-        # STEP 11: CONSOLIDATE SUPPORT STRUCTURES
+        # STEP 11: BUILD SUBSTRUCTURE (PIERS, CAPS, PILES, REINFORCEMENT)
+        #
+        # The substructure builders are authored with Z=0 at deck level and
+        # X=0 at mid-span.  Shift them into the superstructure's CAD frame so
+        # both systems share one world coordinate system.
+        soffit_z = -(
+            self.deck_thickness
+            + self.girder_section_d
+            + self.girder_section_tf_b
+        )
+        substructure = build_substructure(
+            span_length=self.span_length_L,
+            deck_width=deck_out["total_deck_width"],
+            soffit_z=soffit_z,
+            model_offset=(
+                self.span_length_L / 2.0,
+                0.0,
+                deck_out["deck_top_z"],
+            ),
+            params=self.substructure_params,
+        )
+        self.substructure_layout = substructure.summary["layout"]
+        self.substructure_summary = {
+            k: v for k, v in substructure.summary.items() if k != "layout"
+        }
+
+        # STEP 12: CONSOLIDATE SUPPORT STRUCTURES
 
         # Compound cross bracings
         if cross_bracings:
@@ -956,7 +993,13 @@ class PlateGirderCADGenerator:
             "median_w_beams": median_w_beams,
             
             # Railings
-            "railings": railings
+            "railings": railings,
+
+            # Substructure (concrete shown semi-transparent in the viewer,
+            # reinforcement shown as opaque steel)
+            "substructure_concrete": substructure.concrete,
+            "substructure_rebar": substructure.rebar,
+            "substructure_summary": self.substructure_summary,
         }
 
     def create3Dcad(self):
@@ -1053,7 +1096,9 @@ class PlateGirderCADGenerator:
                             KEY_CAD_DECK: "Deck",
                             KEY_CAD_CRASH_BARRIER: "Crash Barrier",
                             KEY_CAD_RAILING: "Railing",
-                            KEY_CAD_MEDIAN: "Median"
+                            KEY_CAD_MEDIAN: "Median",
+                            KEY_CAD_SUBSTRUCTURE: "Substructure",
+                            KEY_CAD_REBAR: "Reinforcement"
         }
 
         GIRDER_COLOR = Quantity_Color(72/255, 72/255, 54/255, Quantity_TOC_RGB)
@@ -1063,6 +1108,8 @@ class PlateGirderCADGenerator:
         BRACING_COLOR = Quantity_Color(60/255, 60/255, 60/255, Quantity_TOC_RGB)
         RAILING_COLOR = Quantity_Color(120/255, 120/255, 120/255, Quantity_TOC_RGB)
         MEDIAN_COLOR = Quantity_Color(120/255, 120/255, 120/255, Quantity_TOC_RGB)
+        CONCRETE_COLOR = Quantity_Color(150/255, 150/255, 145/255, Quantity_TOC_RGB)
+        REBAR_COLOR = Quantity_Color(120/255, 70/255, 30/255, Quantity_TOC_RGB)
 
         self.component = component  
         
@@ -1100,6 +1147,22 @@ class PlateGirderCADGenerator:
             label = [KEY_CAD_MEDIAN, hover_dict.get(KEY_CAD_MEDIAN)]
             shapes = self.model_data["median_barriers"]
             osdag_display_shape(self.display, shapes, color=MEDIAN_COLOR, update=True, label=label, canvas=self.cad_widget)
+
+        elif self.component == "Substructure":
+            label = [KEY_CAD_SUBSTRUCTURE, hover_dict.get(KEY_CAD_SUBSTRUCTURE)]
+            shapes = self.model_data["substructure_concrete"]
+            osdag_display_shape(
+                self.display, shapes, color=CONCRETE_COLOR,
+                transparency=0.65, update=True, label=label, canvas=self.cad_widget
+            )
+
+        elif self.component == "Rebar":
+            label = [KEY_CAD_REBAR, hover_dict.get(KEY_CAD_REBAR)]
+            shapes = self.model_data["substructure_rebar"]
+            osdag_display_shape(
+                self.display, shapes, color=REBAR_COLOR,
+                update=True, label=label, canvas=self.cad_widget
+            )
 
 
 def osdag_display_shape(display, shapes, material=None, texture=None, color=None, transparency=None, update=False, label=[], canvas=None):

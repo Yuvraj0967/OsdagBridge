@@ -52,7 +52,11 @@ class BridgeGeometryMapper:
     def apply_color(self, shape_rep, rgb_tuple):
         """Applies an RGB color to an IfcShapeRepresentation."""
         rgb = self.file.createIfcColourRgb(None, float(rgb_tuple[0]), float(rgb_tuple[1]), float(rgb_tuple[2]))
-        surf_style = self.file.createIfcSurfaceStyleRendering(SurfaceColour=rgb)
+        # ReflectanceMethod is mandatory in IFC4; omitting it makes strict
+        # validators reject every styled item in the file.
+        surf_style = self.file.createIfcSurfaceStyleRendering(
+            SurfaceColour=rgb, ReflectanceMethod="NOTDEFINED"
+        )
         surface_style = self.file.createIfcSurfaceStyle(None, "BOTH", [surf_style])
         for item in shape_rep.Items:
             self.file.createIfcStyledItem(item, [surface_style], None)
@@ -64,6 +68,36 @@ class BridgeGeometryMapper:
             ProfileType="AREA", ProfileName=None,
             Position=self.create_axis2placement_2d(),
             XDim=float(width), YDim=float(height)
+        )
+
+    def create_circular_profile(self, radius, name=None):
+        """Circular profile used for piers, piles and reinforcing bars."""
+        return self.file.createIfcCircleProfileDef(
+            ProfileType="AREA", ProfileName=name,
+            Position=self.create_axis2placement_2d(),
+            Radius=float(radius),
+        )
+
+    def create_revolved_circular_solid(self, bar_radius, ring_radius,
+                                       position_3d=None, angle=None):
+        """360-degree revolved circle, i.e. a torus, for circular ties."""
+        if angle is None:
+            angle = 2.0 * math.pi
+        profile = self.file.createIfcCircleProfileDef(
+            ProfileType="AREA", ProfileName=None,
+            Position=self.create_axis2placement_2d((float(ring_radius), 0.0)),
+            Radius=float(bar_radius),
+        )
+        axis_origin = self.file.createIfcCartesianPoint((0.0, 0.0, 0.0))
+        axis_dir = self.file.createIfcDirection((0.0, 0.0, 1.0))
+        axis = self.file.createIfcAxis1Placement(axis_origin, axis_dir)
+        if position_3d is None:
+            position_3d = self.create_axis2placement_3d((0.0, 0.0, 0.0))
+        return self.file.createIfcRevolvedAreaSolid(
+            SweptArea=profile,
+            Position=position_3d,
+            Axis=axis,
+            Angle=float(angle),
         )
         
     def create_l_shape_profile(self, depth, width, thickness):

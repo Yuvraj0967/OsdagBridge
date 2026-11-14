@@ -284,6 +284,8 @@ class CAD3DWindow(QWidget):
         WBEAM_COLOR = Quantity_Color(128/255, 128/255, 128/255, Quantity_TOC_RGB)
         BARRIER_POST_COLOR = Quantity_Color(20/255, 20/255, 20/255, Quantity_TOC_RGB)
         SUPPORT_COLOR = Quantity_Color(20/255.0, 20/255.0, 20/255.0, Quantity_TOC_RGB)
+        SUBSTRUCTURE_CONCRETE_COLOR = Quantity_Color(150/255.0, 150/255.0, 145/255.0, Quantity_TOC_RGB)
+        REBAR_COLOR = Quantity_Color(120/255.0, 70/255.0, 30/255.0, Quantity_TOC_RGB)
 
 
 
@@ -465,6 +467,33 @@ class CAD3DWindow(QWidget):
             "Railing",
             f"Railing\nType: {params.railing_type.upper()}\nRails: {params.rail_count}\nWidth: {params.railing_width:.2f} mm",
             BARRIER_COLOR
+        )
+
+        # SUBSTRUCTURE (semi-transparent concrete, opaque reinforcement)
+        sub_summary = cad_data.get("substructure_summary", {}) or {}
+        display_and_register(
+            cad_data.get("substructure_concrete", []),
+            "Substructure",
+            (
+                "Substructure\n"
+                f"Piers: {sub_summary.get('pier_count', 0)}\n"
+                f"Concrete: {sub_summary.get('concrete_m3', 0.0):.2f} m3\n"
+                f"Reinforcement: {sub_summary.get('steel_kg', 0.0):.0f} kg"
+            ),
+            SUBSTRUCTURE_CONCRETE_COLOR,
+            transparency=0.65,
+        )
+
+        display_and_register(
+            cad_data.get("substructure_rebar", []),
+            "Rebar",
+            (
+                "Reinforcement\n"
+                f"Bars: {sub_summary.get('bar_count', 0)}\n"
+                f"Bar length: {sub_summary.get('rebar_m', 0.0):.0f} m\n"
+                "Main bars: 16 mm | Ties: 8 mm"
+            ),
+            REBAR_COLOR,
         )
 
         # Nodes and grillage overlays
@@ -716,6 +745,8 @@ class CAD3DWindow(QWidget):
             "Crash Barrier": ["Crash Barrier", "Crash Barrier W-Beam"],
             "Median":        ["Median", "Median W-Beam"],
             "Railing":       ["Railing"],
+            "Substructure":  ["Substructure"],
+            "Rebar":         ["Rebar"],
             "Grillage":      ["Grillage"],
             "Node":          ["Node"],
         }
@@ -1209,6 +1240,8 @@ class BridgeComponentCheckbox(QWidget):
         ("Crash Barrier", "Crash Barrier"),
         ("Median",        "Median"),
         ("Railing",       "Railing"),
+        ("Substructure",  "Substructure"),
+        ("Rebar",         "Rebar"),
         ("Grillage view", "Grillage"),
         ("Node",          "Node"),
         ("Node Numbers",  "NodeNumbers"),

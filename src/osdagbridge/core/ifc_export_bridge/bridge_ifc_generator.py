@@ -7,6 +7,7 @@ import time
 import ifcopenshell
 from osdagbridge.core.ifc_export_bridge.bridge_geometry_mapper import BridgeGeometryMapper, create_ifc_guid
 from osdagbridge.core.ifc_export_bridge.metadata_mapper import BridgeMetadataMapper
+from osdagbridge.core.ifc_export_bridge.substructure_ifc import export_substructure
 
 class BridgeIfcGenerator:
     def __init__(self, output_path):
@@ -20,8 +21,9 @@ class BridgeIfcGenerator:
         self.site = None
         self.building = None
         self.storey = None
+        self.substructure_storey = None
 
-    def initialize_file(self):
+    def initialize_file(self, substructure_offset=(0.0, 0.0, 0.0)):
         """Initializes empty IFC4 file with proper schema and default spatial structure."""
         stamp = int(time.time())
         self.file = ifcopenshell.file(schema="IFC4")
@@ -60,18 +62,32 @@ class BridgeIfcGenerator:
         self.site = self.file.createIfcSite(create_ifc_guid(), self._owner_history, Name="Default Site", ObjectPlacement=self.file.createIfcLocalPlacement(None, place_3d))
         self.building = self.file.createIfcBuilding(create_ifc_guid(), self._owner_history, Name="Bridge Structure", ObjectPlacement=self.file.createIfcLocalPlacement(self.site.ObjectPlacement, place_3d))
         self.storey = self.file.createIfcBuildingStorey(create_ifc_guid(), self._owner_history, Name="Superstructure", ObjectPlacement=self.file.createIfcLocalPlacement(self.building.ObjectPlacement, place_3d))
+
+        # Substructure storey: its local origin is mid-span at deck level (the
+        # coordinate system required by the screening brief).  The offset moves
+        # it into the bridge's global IFC frame, so it aligns with the
+        # superstructure while all substructure placements stay task-local.
+        sub_offset_m = [float(v) * 0.001 for v in substructure_offset]
+        sub_place_3d = self.mapper.create_axis2placement_3d(sub_offset_m)
+        self.substructure_storey = self.file.createIfcBuildingStorey(
+            create_ifc_guid(), self._owner_history, Name="Substructure",
+            ObjectPlacement=self.file.createIfcLocalPlacement(
+                self.building.ObjectPlacement, sub_place_3d
+            ),
+        )
         
         # Relate hierarchy
         self.file.createIfcRelAggregates(create_ifc_guid(), self._owner_history, RelatingObject=self.project, RelatedObjects=[self.site])
         self.file.createIfcRelAggregates(create_ifc_guid(), self._owner_history, RelatingObject=self.site, RelatedObjects=[self.building])
-        self.file.createIfcRelAggregates(create_ifc_guid(), self._owner_history, RelatingObject=self.building, RelatedObjects=[self.storey])
+        self.file.createIfcRelAggregates(create_ifc_guid(), self._owner_history, RelatingObject=self.building, RelatedObjects=[self.storey, self.substructure_storey])
 
     def bind_element_to_storey(self, element):
         self.file.createIfcRelContainedInSpatialStructure(create_ifc_guid(), self._owner_history, RelatingStructure=self.storey, RelatedElements=[element])
 
     def generate_from_extracted_data(self, extracted_dict, cad_context=None):
         """Consume extracted dictionary logic and bind to schema."""
-        self.initialize_file()
+        substructure = extracted_dict.get("substructure") or {}
+        self.initialize_file(substructure.get("storey_offset", (0.0, 0.0, 0.0)))
         s = 0.001 # Global Scale Factor (Meters)
         shared = {"deck_top_m": 0.0}  # Shared state: deck top surface in meters
         
@@ -619,6 +635,14 @@ class BridgeIfcGenerator:
                  elif item._class_name == "RailingSweep":
                      _process_railing(item)
                  
+        # --- SUBSTRUCTURE -------------------------------------------------
+        # Written after the superstructure so the IFC file keeps the familiar
+        # superstructure ordering while sharing one IfcProject/storey tree.
+        export_substructure(
+            self.file, self.mapper, self._owner_history,
+            self.substructure_storey, substructure,
+        )
+
         # Intentionally ignore "deck_textures"
         print("Model assembly complete. Saving...")
         self.file.write(self.output_path)
