@@ -149,7 +149,7 @@ def main():
         summary = json.load(fh)
     s = summary["summary"]
     counts = summary["ifc_counts"]
-    renders = summary["renders"]
+    renders = {k: os.path.join(ARTIFACTS, v) for k, v in summary["renders"].items()}
 
     out_path = os.path.join(ARTIFACTS, "OsdagBridge_Substructure_Report.pdf")
     doc = SimpleDocTemplate(
@@ -186,7 +186,7 @@ def main():
         ["Candidate", "Yuvraj Pateria"],
         ["Task", "Parametric 3D CAD modelling of the bridge substructure and IFC workflow integration"],
         ["Tools", "Python 3.11, pythonOCC 7.9, ifcopenshell 0.8.3, IFC4"],
-        ["Validation", f"6 automated tests passed; IFC schema validation: {summary['validation_error_count']} issues"],
+        ["Validation", f"9 automated tests passed; IFC schema validation: {summary['validation_error_count']} issues"],
         ["Date", date.today().strftime("%d %B %Y")],
     ]
     story.append(table([[Paragraph(f"<b>{a}</b>", st["small"]), Paragraph(b, st["small"])] for a, b in cover],
@@ -195,7 +195,7 @@ def main():
     story.append(picture(renders["full_bridge_iso"], width=16.5 * cm))
     story.append(Paragraph(
         "Complete bridge produced by the CAD generator: existing superstructure plus the new "
-        "substructure (two pier bents, hammerhead pier caps, pedestals, pile caps and 2x2 bored piles).",
+        "substructure (two pier bents, each with a tapered cap, a pedestal under every girder, a pile cap and a 2x2 group of bored piles).",
         st["caption"],
     ))
     story.append(Paragraph(
@@ -234,12 +234,12 @@ def main():
     story.append(Paragraph("1. Objective and scope", st["h1"]))
     para(
         "The OsdagBridge repository already contains a mature set of superstructure components "
-        "(plate girders, deck, bracings, barriers and railings) but the substructure packages "
-        "contained only placeholder geometry and no builders. The IFC exporter likewise emitted "
-        "only the superstructure. This submission fills both gaps:"
+        "(plate girders, deck, bracings, barriers and railings), but the substructure packages hold "
+        "only stub modules and the IFC exporter writes only the superstructure. This submission "
+        "adds:"
     )
     bullet("five parametric pythonOCC builders - pier, pier cap, pedestal, pile and pile cap - each with internal reinforcement;")
-    bullet("a substructure assembly that places two pier bents in the task coordinate system and converts them into the existing bridge CAD frame;")
+    bullet("a substructure assembly that places a pier bent under each bearing line in the task coordinate system and converts it into the existing bridge CAD frame;")
     bullet("native IFC4 export of the substructure as IfcColumn, IfcBeam, IfcFooting, IfcPile and IfcReinforcingBar, including materials, quantities and a dedicated Substructure storey;")
     bullet("automatic inclusion in the existing File → Save 3D CAD Model → Save as type: .ifc workflow, alongside the superstructure.")
     para(
@@ -257,12 +257,12 @@ def main():
     )
     files = [
         ["File", "Purpose"],
-        ["core/bridge_components/reinforcement.py", "Shared bar descriptors, cylinders, tori, ties and compound helpers"],
+        ["core/bridge_components/reinforcement.py", "Rebar defaults, bar descriptors, spacing helpers, circular cage, OCC primitives"],
         ["sub_structure/pier/builder.py", "Circular pier, 12 no. 16 mm main bars, 8 mm ties @ 200 mm"],
-        ["sub_structure/pier_cap/builder.py", "Trapezoidal hammerhead cap, longitudinal bars and trapezoidal ties"],
+        ["sub_structure/pier_cap/builder.py", "Tapered (hammerhead) cap, longitudinal bars and trapezoidal stirrups"],
         ["sub_structure/pedestal/builder.py", "Bearing pedestal with a four-bar cage"],
         ["foundation/pile/builder.py", "400 mm bored pile, 8 no. main bars, circular ties"],
-        ["foundation/pile_cap/builder.py", "2200 x 1200 x 600 pile cap with top/bottom mats"],
+        ["foundation/pile_cap/builder.py", "2200 x 1200 x 600 pile cap with top/bottom mats and perimeter ties"],
         ["sub_structure/assembly.py", "Layout, placement, summaries and task-to-model coordinate conversion"],
         ["core/ifc_export_bridge/substructure_ifc.py", "IFC writer for concrete, rebar, materials and quantities"],
         ["ifc_export_bridge/bridge_geometry_mapper.py", "Added circular profiles, revolved solids and a validity fix for surface styles"],
@@ -270,7 +270,7 @@ def main():
         ["ifc_export_bridge/bridge_ifc_generator.py", "Adds the Substructure storey and invokes the writer"],
         ["desktop/ui/cad_3d.py", "Substructure/Rebar visibility controls and semi-transparent display"],
         ["core/bridge_types/plate_girder/cad_generator.py", "Builds and returns the substructure with the superstructure"],
-        ["tests/unit/test_substructure.py", "Six automated geometry, assembly and IFC tests"],
+        ["tests/unit/test_substructure.py", "Nine automated geometry, cover, assembly and IFC tests"],
         ["demo/run_demo.py", "Headless CAD + IFC + offscreen render harness"],
         ["demo/make_video.py, demo/make_report.py", "Submission video and this report"],
     ]
@@ -299,9 +299,11 @@ def main():
     para(
         "The same offset becomes the object placement of the IFC Substructure storey. Element "
         "placements therefore remain in the simple task-local frame, while the exported IFC world "
-        "coordinates line up with the superstructure. The pier cap soffit is derived from the "
-        "deck thickness, girder depth and bottom-flange thickness, so changing the superstructure "
-        "automatically moves the substructure with it."
+        "coordinates line up with the superstructure. Nothing about the superstructure is "
+        "hard-coded: the pedestal tops are set to the girder soffit level, one pedestal is placed "
+        "under each girder line, and the piers stand under the bearing lines at the two ends of "
+        "the span, so changing the girder depth, spacing, number or span moves the substructure "
+        "with it."
     )
 
     # ------------------------------------------------------------ 4 geometry
@@ -311,7 +313,8 @@ def main():
         ["Pier", "diameter / height", "800 mm / 3000 mm"],
         ["Pier cap", "top width / bottom width / depth", "3000 / 1200 / 600 mm"],
         ["Pier cap", "length", "deck width - 2 x 500 mm"],
-        ["Pedestal", "length x width x height", "600 x 400 x 150 mm"],
+        ["Pedestal", "length x width x height", "600 x 400 x 150 mm (assumed)"],
+        ["Pedestal", "number per cap", "one per girder line"],
         ["Pile cap", "length x width x depth", "2200 x 1200 x 600 mm"],
         ["Piles", "number / diameter / length", "4 (2x2) / 400 mm / 5000 mm"],
         ["Piles", "centre-to-centre spacing", "600 mm"],
@@ -330,9 +333,9 @@ def main():
     story.append(Spacer(1, 0.2 * cm))
     story.append(picture(renders["substructure_iso"], width=16.5 * cm))
     story.append(Paragraph(
-        "Substructure isolated: two pier bents, each with a hammerhead cap, two pedestals, one "
-        "circular pier, a pile cap and four piles. Concrete is shown translucent so the "
-        "reinforcement cage is visible.",
+        "Substructure isolated: two pier bents, each with a tapered cap, a pedestal under every "
+        "girder, one circular pier, a pile cap and four piles. Concrete is shown translucent so "
+        "the reinforcement is visible.",
         st["caption"],
     ))
 
@@ -340,19 +343,23 @@ def main():
     story.append(PageBreak())
     story.append(Paragraph("5. Reinforcement modelling", st["h1"]))
     para(
-        "Reinforcement is not a cosmetic overlay: every bar is described by a small serialisable "
-        "record before any geometry is made. A line bar stores two endpoints and a diameter; a "
+        "Every bar is described by a small plain-data record before any geometry is made. A line "
+        "bar stores two endpoints and a diameter; a "
         "ring bar stores a centre, a ring radius and a diameter. The same descriptors drive both "
         "the pythonOCC display geometry and the IFC reinforcing-bar elements, so the viewer and "
         "the exported model cannot drift apart."
     )
     bullet("Pier: 12 vertical 16 mm bars on a 344 mm radius, plus 8 mm circular ties at 200 mm;")
-    bullet("Pier cap: two layers of longitudinal 16 mm bars at 150 mm, enclosed by trapezoidal 8 mm ties at 200 mm that follow the taper;")
-    bullet("Pile cap: top and bottom orthogonal mats of 16 mm bars at 150 mm, plus perimeter 8 mm ties;")
+    bullet("Pier cap: two layers of longitudinal 16 mm bars at 150 mm, enclosed by trapezoidal 8 mm stirrups at 200 mm that follow the taper;")
+    bullet("Pile cap: top and bottom mats of 16 mm bars at 150 mm in both directions, the second direction laid on the first, plus perimeter 8 mm ties;")
     bullet("Pile: 8 vertical 16 mm bars and circular 8 mm ties at 200 mm;")
     bullet("Pedestal: four vertical 16 mm bars and a closed 8 mm tie.")
     para(
-        "Cover is measured to the outside face of the bar, not to its centre-line. Each cage is "
+        "Cover is measured to the outer face of the ties, and the main bars sit inside the ties "
+        "rather than passing through them. On the sloping faces of the pier cap the offset is taken "
+        "normal to the face; a purely horizontal offset would leave the top corners of the stirrups "
+        "outside the concrete. The requested spacing is treated as a maximum, so bars are spread "
+        "evenly at a pitch that never exceeds it. Each cage is "
         "returned as a single TopoDS_Compound. Fusing hundreds of bars with BRepAlgoAPI_Fuse "
         "would be slow and would create a very expensive shape for the viewer to tessellate; a "
         "compound displays correctly and keeps the interactive CAD window responsive."
@@ -363,8 +370,7 @@ def main():
     )
     story.append(picture(renders["pier_detail"], width=16.5 * cm))
     story.append(Paragraph(
-        "One pier bent with the concrete at higher opacity: the cap reinforcement, pedestal cages, "
-        "pier cage and pile-cap mat are all visible.",
+        "One pier bent: cap reinforcement, pedestal cages, pier cage, pile-cap mats and pile cages.",
         st["caption"],
     ))
 
@@ -382,7 +388,7 @@ def main():
         ["Pier", "IfcColumn", "IfcExtrudedAreaSolid + IfcCircleProfileDef"],
         ["Pier cap", "IfcBeam", "IfcExtrudedAreaSolid + trapezoidal IfcArbitraryClosedProfileDef"],
         ["Pedestal", "IfcBuildingElementProxy", "IfcExtrudedAreaSolid + IfcRectangleProfileDef"],
-        ["Pile cap", "IfcFooting (PAD_FOOTING)", "IfcExtrudedAreaSolid + IfcRectangleProfileDef"],
+        ["Pile cap", "IfcFooting (PILE_CAP)", "IfcExtrudedAreaSolid + IfcRectangleProfileDef"],
         ["Pile", "IfcPile (BORED)", "IfcExtrudedAreaSolid + IfcCircleProfileDef"],
         ["Straight rebar", "IfcReinforcingBar", "IfcExtrudedAreaSolid + IfcCircleProfileDef"],
         ["Circular tie", "IfcReinforcingBar", "IfcRevolvedAreaSolid (360°) + IfcCircleProfileDef"],
@@ -395,8 +401,8 @@ def main():
         "writer also adds:"
     )
     bullet("one IfcBuildingStorey named 'Substructure', placed at mid-span/deck-level and aggregated with the superstructure storey;")
-    bullet("an IfcMaterial association per element (Concrete M30 or Fe500);")
-    bullet("an IfcElementQuantity set per element: net volume, length, count and, for rebar, total length and weight;")
+    bullet("an IfcMaterial association per element (concrete or steel grade from the substructure parameters);")
+    bullet("an IfcElementQuantity set per element: net volume and length for concrete; bar count, total length and weight for rebar;")
     bullet("a Pset_OsdagBridgeSubstructure property set carrying the key dimensions and grades;")
     bullet("stable, individual element names and tags (Pier 1, Pier Cap 1, Pile 1-1, ...), so a BIM tool can produce a detailed BOQ.")
     para(
@@ -411,14 +417,17 @@ def main():
     story.append(Paragraph("7. Verification and results", st["h1"]))
     tests = [
         ["Test", "What it checks", "Result"],
-        ["test_pier_dimensions_and_rebar", "800 x 3000 bbox, valid solid, cage inside 40 mm cover", "Pass"],
-        ["test_pier_cap_dimensions_and_trapezoid", "3000 top / 14000 long / 600 deep bbox, rebar inside cover", "Pass"],
+        ["test_pier_dimensions_and_rebar", "800 x 3000 bounding box, valid solid, cage inside the cover", "Pass"],
+        ["test_pier_cap_dimensions_and_trapezoid", "3000 wide, 600 deep, requested length; valid solid", "Pass"],
+        ["test_pier_cap_rebar_keeps_cover_to_sloping_faces", "Every bar end lies inside the section offset by cover + bar radius", "Pass"],
+        ["test_main_bar_pitch_does_not_exceed_requested_spacing", "Mat bar pitch is never larger than the requested spacing", "Pass"],
         ["test_pile_and_pile_cap_dimensions", "Pile 400 x 5000, pile cap 2200 x 1200 x 600, valid solids", "Pass"],
-        ["test_pedestal_dimensions", "600 x 400 x 150 bbox and cage", "Pass"],
-        ["test_assembly_counts_and_coordinate_conversion", "18 elements, 8 piles, task-frame layout, model offset", "Pass"],
-        ["test_full_cad_and_ifc_export", "Full bridge CAD, 36 rebar groups, IFC reopen, entity counts, materials, quantities", "Pass"],
+        ["test_pedestal_dimensions", "600 x 400 x 150 bounding box and cage", "Pass"],
+        ["test_assembly_counts_and_coordinate_conversion", "Member counts, 2x2 pile positions, members stack without gaps, model offset", "Pass"],
+        ["test_pedestals_follow_bearing_lines", "One pedestal per girder line; a cap too short for them is rejected", "Pass"],
+        ["test_full_cad_and_ifc_export", "Pedestal top equals girder soffit; IFC entity counts; material and quantities on every element; schema validation", "Pass"],
     ]
-    story.append(table(tests, [5.2 * cm, 9.2 * cm, 1.8 * cm]))
+    story.append(table(tests, [6.6 * cm, 8.4 * cm, 1.4 * cm], font_size=7.4))
     para("")
     counts_rows = [["IFC entity", "Count", "Meaning"]] + [
         ["IfcPile", counts["IfcPile"], "bored piles"],
@@ -478,7 +487,8 @@ def main():
     # ------------------------------------------------------------ 9 limits
     story.append(Paragraph("9. Limitations and next steps", st["h1"]))
     bullet("The dimensions are screening-task defaults, not a design checked against IRC loading, bearing pressure or pile capacity.")
-    bullet("One pier is placed under each 14 m cap. A production hammerhead pier would normally be checked for cap bending, punching shear and bearing spacing.")
+    bullet(f"A single pier carries each {s['cap_length'] / 1000:.1f} m cap. The cap cantilevers have not been checked for bending or shear, and a real crossing of this width would more likely use a multi-column bent.")
+    bullet("Bearings are not modelled; the pedestal tops are set to the girder soffit. Each pier stands under the bearing line at the end of the span, so half of its cap projects beyond the deck, as it would under an adjacent span.")
     bullet("The bridge is straight; the substructure does not yet follow the skew angle used by the superstructure.")
     bullet("Rebar is modelled as clean cylinders and tori - hooks, lap lengths, curtailment and anchorage are not detailed.")
     bullet("The IFC BOQ uses element quantities rather than a full IfcCostSchedule/IfcElementAssembly breakdown.")
@@ -535,7 +545,7 @@ def main():
         ["Reinforcement total length", f"{s['rebar_m']:.0f} m"],
         ["Reinforcement mass (7850 kg/m³)", f"{s['steel_kg']:.0f} kg"],
         ["Pier cap length", f"{s['cap_length']:.0f} mm"],
-        ["Pile founding level below deck", f"{abs(s['pile_bottom_z']):.0f} mm"],
+        ["Pile founding level below deck", f"{abs(s['pile_toe_z']):.0f} mm"],
         ["IFC file size", f"{summary['ifc_size_bytes'] / 1024:.0f} KB"],
         ["IFC schema validation issues", f"{summary['validation_error_count']}"],
     ]
@@ -550,8 +560,8 @@ def main():
     )
     for key, caption in [
         ("substructure_iso", "Substructure isometric view with the reinforcement cage."),
-        ("substructure_front", "Substructure transverse elevation."),
-        ("full_bridge_front", "Complete bridge transverse elevation, showing the substructure below the deck."),
+        ("substructure_front", "Substructure elevation along the span."),
+        ("full_bridge_front", "Complete bridge elevation along the span, showing the substructure below the deck."),
     ]:
         story.append(picture(renders[key], width=16.5 * cm))
         story.append(Paragraph(caption, st["caption"]))

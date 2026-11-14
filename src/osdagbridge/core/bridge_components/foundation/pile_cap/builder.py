@@ -1,73 +1,60 @@
 """
 Parametric 3D CAD builder for a rectangular pile cap.
 
-Default geometry (mm) from the substructure screening brief:
-
-    pile_cap_length = 2200 (X)
-    pile_cap_width  = 1200 (Y)
-    pile_cap_depth  = 600  (Z)
-
-Local frame: origin at the centre of the bottom face, +Z up.
+Local frame: origin at the centre of the bottom face, +Z up; ``length`` runs
+along X and ``width`` along Y.
 """
 
-import math
-
 from osdagbridge.core.bridge_components.reinforcement import (
+    REBAR_COVER,
+    REBAR_MAIN_DIAMETER,
+    REBAR_SPACING_LONGITUDINAL,
+    REBAR_SPACING_TRANSVERSE,
+    REBAR_TRANSVERSE_DIAMETER,
     bar_group,
     bars_to_compound,
     line_bar,
     make_box,
     rectangular_tie,
-    translate,
+    spread,
+    stations,
 )
 
+# Defaults from the screening brief (mm)
 PILE_CAP_LENGTH = 2200.0
 PILE_CAP_WIDTH = 1200.0
 PILE_CAP_DEPTH = 600.0
-REBAR_MAIN_DIAMETER = 16.0
-REBAR_SPACING_LONGITUDINAL = 150.0
-REBAR_TRANSVERSE_DIAMETER = 8.0
-REBAR_SPACING_TRANSVERSE = 200.0
-REBAR_COVER = 40.0
 
 
-def _even_positions(usable_half, spacing):
-    if usable_half <= 0:
-        return []
-    n = int(math.floor((2.0 * usable_half) / spacing)) + 1
-    if n <= 1:
-        return [0.0]
-    return [-usable_half + i * (2.0 * usable_half) / (n - 1) for i in range(n)]
+def _mat_bars(length, width, depth, cover, main_d, tie_d, spacing):
+    """
+    Top and bottom mats.  In each mat the X bars form the outer layer and the
+    Y bars sit directly on them, so crossing bars do not occupy the same
+    space.  Both layers lie inside the perimeter ties.
+    """
+    side = cover + tie_d + main_d / 2.0
+    half_x = length / 2.0 - side
+    half_y = width / 2.0 - side
+    xs = spread(half_x, spacing)
+    ys = spread(half_y, spacing)
 
-
-def _mat_bars(length, width, depth, cover, main_d, spacing):
-    """Two orthogonal mats, one near the top and one near the bottom."""
     bars = []
-    usable_x = length / 2.0 - cover - main_d / 2.0
-    usable_y = width / 2.0 - cover - main_d / 2.0
-    xs = _even_positions(usable_x, spacing)
-    ys = _even_positions(usable_y, spacing)
-
-    for z in (cover + main_d / 2.0, depth - cover - main_d / 2.0):
-        # Bars running along X, distributed across Y.
+    for z_outer, inward in ((side, 1.0), (depth - side, -1.0)):
+        z_inner = z_outer + inward * main_d
         for y in ys:
-            bars.append(line_bar((-usable_x, y, z), (usable_x, y, z), main_d))
-        # Bars running along Y, distributed across X.
+            bars.append(line_bar((-half_x, y, z_outer), (half_x, y, z_outer), main_d))
         for x in xs:
-            bars.append(line_bar((x, -usable_y, z), (x, usable_y, z), main_d))
+            bars.append(line_bar((x, -half_y, z_inner), (x, half_y, z_inner), main_d))
     return bars
 
 
 def _tie_bars(length, width, depth, cover, tie_d, spacing):
+    inset = cover + tie_d / 2.0
     bars = []
-    half_x = length / 2.0 - cover - tie_d / 2.0
-    half_y = width / 2.0 - cover - tie_d / 2.0
-    z = cover + tie_d / 2.0
-    while z <= depth - cover - tie_d / 2.0 + 1e-6:
+    for z in stations(inset, depth - inset, spacing):
         bars.extend(rectangular_tie(
-            (0.0, 0.0), z, 2.0 * half_x, 2.0 * half_y, tie_d
+            (0.0, 0.0), z, length - 2.0 * inset, width - 2.0 * inset, tie_d
         ))
-        z += spacing
     return bars
 
 
@@ -89,37 +76,30 @@ def build_pile_cap(
 
     concrete = make_box(length, width, depth,
                         origin=(-length / 2.0, -width / 2.0, 0.0))
-    main_bars = _mat_bars(length, width, depth, cover,
-                          main_rebar_diameter, main_spacing)
+    main_bars = _mat_bars(length, width, depth, cover, main_rebar_diameter,
+                          tie_rebar_diameter, main_spacing)
     tie_bars = _tie_bars(length, width, depth, cover,
                          tie_rebar_diameter, tie_spacing)
     bars = main_bars + tie_bars
 
-    bar_groups = [
-        bar_group(f"{name} - Mat Bars", main_bars, "MAIN",
-                  main_rebar_diameter, component=name),
-        bar_group(f"{name} - Perimeter Ties", tie_bars, "SHEAR",
-                  tie_rebar_diameter, component=name),
-    ]
-
     return {
         "name": name,
-        "kind": "pile_cap",
         "concrete": concrete,
         "rebar": bars_to_compound(bars),
         "bars": bars,
-        "bar_groups": bar_groups,
+        "bar_groups": [
+            bar_group(f"{name} - Mat Bars", main_bars, "MAIN", component=name),
+            bar_group(f"{name} - Perimeter Ties", tie_bars, "SHEAR", component=name),
+        ],
         "meta": {
             "kind": "box",
             "ifc_class": "IfcFooting",
-            "predefined_type": "PAD_FOOTING",
+            "predefined_type": "PILE_CAP",
             "name": name,
-            "origin": [0.0, 0.0, 0.0],
             "length": float(length),
             "width": float(width),
             "height": float(depth),
             "cover": float(cover),
-            "concrete_grade": "M30",
             "main_bar_diameter": float(main_rebar_diameter),
             "main_spacing": float(main_spacing),
             "tie_bar_diameter": float(tie_rebar_diameter),

@@ -138,7 +138,7 @@ def fade_frames(a, b, steps):
 def main():
     with open(os.path.join(ARTIFACTS, "summary.json"), encoding="utf-8") as fh:
         summary = json.load(fh)
-    renders = summary["renders"]
+    renders = {k: os.path.join(ARTIFACTS, v) for k, v in summary["renders"].items()}
 
     slides = [
         (title_card(
@@ -149,7 +149,7 @@ def main():
         (image_slide(
             renders["full_bridge_iso"],
             "Complete bridge: superstructure + new substructure",
-            "Two pier bents, hammerhead caps, pile caps and 2x2 bored piles",
+            "Two pier bents: tapered cap, pedestal under each girder, pile cap and 2x2 bored piles",
         ), 4.5),
         (image_slide(
             renders["substructure_iso"],
@@ -163,8 +163,8 @@ def main():
         ), 4.5),
         (image_slide(
             renders["full_bridge_front"],
-            "Transverse elevation",
-            "Deck 15 m wide  •  pier cap 3.0 m top / 1.2 m bottom  •  piles 5.0 m long",
+            "Elevation along the span",
+            "Pier cap 3.0 m top / 1.2 m bottom  •  pier 3.0 m  •  piles 5.0 m long",
         ), 4.0),
         (terminal_slide(summary), 7.0),
         (title_card(

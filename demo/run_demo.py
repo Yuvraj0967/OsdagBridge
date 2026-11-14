@@ -217,7 +217,7 @@ def render_views(generator, cad_data, out_dir):
     layout_components = generator.substructure_layout["components"]
     keep = [
         i for i, meta in enumerate(layout_components)
-        if meta.get("index") == "1"
+        if meta["bent"] == 1
     ]
     renderer.erase()
     renderer.display([cad_data["substructure_concrete"][i] for i in keep],
@@ -263,7 +263,7 @@ def main():
     print(
         f"  superstructure keys: {len(cad_data)} | "
         f"substructure elements: {len(cad_data['substructure_concrete'])} | "
-        f"rebar groups: {len(cad_data['substructure_rebar'])}"
+        f"rebar cages: {len(cad_data['substructure_rebar'])}"
     )
     print(
         f"  concrete: {summary['concrete_m3']:.2f} m3 | "
@@ -322,13 +322,13 @@ def main():
 
     record = {
         "span_mm": args.span,
-        "ifc_path": os.path.abspath(ifc_path),
+        "ifc_path": os.path.basename(ifc_path),
         "ifc_size_bytes": os.path.getsize(ifc_path),
         "ifc_counts": counts,
         "validation_error_count": len(validation_errors),
         "validation_errors": [str(e) for e in validation_errors[:20]],
         "summary": summary,
-        "renders": {k: os.path.abspath(v) for k, v in renders.items()},
+        "renders": {k: os.path.basename(v) for k, v in renders.items()},
     }
     with open(os.path.join(args.out, "summary.json"), "w", encoding="utf-8") as fh:
         json.dump(record, fh, indent=2)

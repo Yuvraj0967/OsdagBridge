@@ -143,8 +143,8 @@ class PlateGirderCADGenerator:
         self.cad_widget = None
         self.component = None
 
-        # Parametric substructure dimensions (mm).  Kept on the generator so
-        # the IFC extractor and the CAD viewer read exactly the same values.
+        # Substructure dimensions (mm), plus the layout and totals of the last
+        # build for the IFC extractor and the viewer tooltips.
         self.substructure_params = SubstructureParameters()
         self.substructure_layout = None
         self.substructure_summary = None
@@ -896,18 +896,23 @@ class PlateGirderCADGenerator:
 
         # STEP 11: BUILD SUBSTRUCTURE (PIERS, CAPS, PILES, REINFORCEMENT)
         #
-        # The substructure builders are authored with Z=0 at deck level and
-        # X=0 at mid-span.  Shift them into the superstructure's CAD frame so
-        # both systems share one world coordinate system.
-        soffit_z = -(
-            self.deck_thickness
-            + self.girder_section_d
-            + self.girder_section_tf_b
+        # The substructure is authored with X=0 at mid-span and Z=0 at deck
+        # level; model_offset moves it into this generator's frame, where
+        # Z=0 is the mid-depth of the girder web.  One pedestal is placed
+        # under each girder line and finishes at the girder soffit.
+        girder_lines = [
+            i * self.girder_spacing - total_width / 2.0
+            for i in range(self.num_girders)
+        ]
+        girder_soffit_model_z = -(
+            self.girder_section_d / 2.0 + self.girder_section_tf_b
         )
+        soffit_z = girder_soffit_model_z - deck_out["deck_top_z"]
         substructure = build_substructure(
             span_length=self.span_length_L,
             deck_width=deck_out["total_deck_width"],
             soffit_z=soffit_z,
+            bearing_ys=girder_lines,
             model_offset=(
                 self.span_length_L / 2.0,
                 0.0,
@@ -915,10 +920,8 @@ class PlateGirderCADGenerator:
             ),
             params=self.substructure_params,
         )
-        self.substructure_layout = substructure.summary["layout"]
-        self.substructure_summary = {
-            k: v for k, v in substructure.summary.items() if k != "layout"
-        }
+        self.substructure_layout = substructure.layout
+        self.substructure_summary = substructure.summary
 
         # STEP 12: CONSOLIDATE SUPPORT STRUCTURES
 

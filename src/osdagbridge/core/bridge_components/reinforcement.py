@@ -27,6 +27,15 @@ from OCC.Core.BRepPrimAPI import (
 from OCC.Core.gp import gp_Ax1, gp_Dir, gp_Pnt, gp_Trsf, gp_Vec
 from OCC.Core.TopoDS import TopoDS_Compound
 
+# Reinforcement defaults from the screening brief (mm).
+REBAR_MAIN_DIAMETER = 16.0
+REBAR_SPACING_LONGITUDINAL = 150.0
+REBAR_TRANSVERSE_DIAMETER = 8.0
+REBAR_SPACING_TRANSVERSE = 200.0
+REBAR_COVER = 40.0
+
+STEEL_DENSITY = 7850.0  # kg/m3
+
 
 # ---------------------------------------------------------------------------
 # transforms / primitives
@@ -43,11 +52,10 @@ def translate(shape, dx=0.0, dy=0.0, dz=0.0):
 
 def make_box(dx, dy, dz, origin=(0.0, 0.0, 0.0)):
     """Axis-aligned box; origin is the corner with the smallest coordinates."""
-    box = BRepPrimAPI_MakeBox(
+    return BRepPrimAPI_MakeBox(
         gp_Pnt(*[float(v) for v in origin]),
         float(dx), float(dy), float(dz),
     ).Shape()
-    return box
 
 
 def make_cylinder_between(p1, p2, diameter):
@@ -77,13 +85,6 @@ def make_cylinder_between(p1, p2, diameter):
     return BRepBuilderAPI_Transform(cylinder, trsf, True).Shape()
 
 
-def make_vertical_cylinder(center_xy, z_bottom, diameter, height):
-    """Vertical cylinder whose bottom face is at ``z_bottom``."""
-    x, y = center_xy
-    cylinder = BRepPrimAPI_MakeCylinder(float(diameter) / 2.0, float(height)).Shape()
-    return translate(cylinder, x, y, z_bottom)
-
-
 def make_ring(center, ring_radius, bar_diameter):
     """Circular stirrup/tie modelled as a torus in the XY plane."""
     torus = BRepPrimAPI_MakeTorus(float(ring_radius), float(bar_diameter) / 2.0).Shape()
@@ -99,6 +100,29 @@ def make_compound(shapes):
         if shape is not None and not shape.IsNull():
             builder.Add(compound, shape)
     return compound
+
+
+# ---------------------------------------------------------------------------
+# bar layout
+# ---------------------------------------------------------------------------
+
+def spread(half_extent, max_spacing):
+    """
+    Positions centred on zero that fill ``[-half_extent, +half_extent]`` with
+    a pitch no larger than ``max_spacing``.  The end positions are always
+    occupied, so the outermost bars sit exactly at the cover line.
+    """
+    if half_extent <= 0.0:
+        return [0.0]
+    n = int(math.ceil(2.0 * half_extent / max_spacing - 1e-9)) + 1
+    step = 2.0 * half_extent / (n - 1)
+    return [-half_extent + i * step for i in range(n)]
+
+
+def stations(start, stop, spacing):
+    """Stations from ``start`` at a fixed ``spacing``, not passing ``stop``."""
+    n = int(math.floor((stop - start) / spacing + 1e-9)) + 1
+    return [start + i * spacing for i in range(max(n, 0))]
 
 
 # ---------------------------------------------------------------------------
@@ -136,6 +160,24 @@ def bar_length(bar):
     raise ValueError(f"Unknown bar kind: {bar['kind']}")
 
 
+def translate_bar(bar, dx, dy, dz):
+    """Copy of a bar descriptor moved by (dx, dy, dz)."""
+    moved = dict(bar)
+    keys = ("p1", "p2") if bar["kind"] == "line" else ("center",)
+    for key in keys:
+        x, y, z = bar[key]
+        moved[key] = [x + dx, y + dy, z + dz]
+    return moved
+
+
+def steel_mass(bars):
+    """Mass in kg of a list of bar descriptors."""
+    volume_mm3 = sum(
+        bar_length(b) * math.pi * (b["diameter"] / 2.0) ** 2 for b in bars
+    )
+    return volume_mm3 * 1e-9 * STEEL_DENSITY
+
+
 def bar_to_shape(bar):
     if bar["kind"] == "line":
         return make_cylinder_between(bar["p1"], bar["p2"], bar["diameter"])
@@ -169,6 +211,32 @@ def rectangular_tie(center_xy, z, width_x, width_y, bar_diameter):
         x2, y2 = corners[(i + 1) % 4]
         bars.append(line_bar((x1, y1, z), (x2, y2, z), bar_diameter))
     return bars
+
+
+def circular_cage(diameter, height, cover, main_d, tie_d, tie_spacing, main_count):
+    """
+    Cage for a vertical circular member: ``main_count`` bars on a pitch circle
+    inside circular ties.  Cover is measured to the outer face of the ties.
+
+    Used by the pier and pile builders.  Returns ``(main_bars, tie_bars)``.
+    """
+    tie_radius = diameter / 2.0 - cover - tie_d / 2.0
+    main_radius = diameter / 2.0 - cover - tie_d - main_d / 2.0
+    if main_radius <= 0.0:
+        raise ValueError("Cover and bar sizes leave no room for the cage")
+
+    main_bars = []
+    for i in range(main_count):
+        angle = 2.0 * math.pi * i / main_count
+        x = main_radius * math.cos(angle)
+        y = main_radius * math.sin(angle)
+        main_bars.append(line_bar((x, y, cover), (x, y, height - cover), main_d))
+
+    tie_bars = [
+        ring_bar((0.0, 0.0, z), tie_radius, tie_d)
+        for z in stations(cover + tie_d / 2.0, height - cover - tie_d / 2.0, tie_spacing)
+    ]
+    return main_bars, tie_bars
 
 
 def bar_group(name, bars, bar_type="MAIN", diameter=None, component=""):

@@ -491,7 +491,8 @@ class CAD3DWindow(QWidget):
                 "Reinforcement\n"
                 f"Bars: {sub_summary.get('bar_count', 0)}\n"
                 f"Bar length: {sub_summary.get('rebar_m', 0.0):.0f} m\n"
-                "Main bars: 16 mm | Ties: 8 mm"
+                f"Main bars: {sub_summary.get('main_bar_diameter', 0):g} mm | "
+                f"Ties: {sub_summary.get('tie_bar_diameter', 0):g} mm"
             ),
             REBAR_COLOR,
         )

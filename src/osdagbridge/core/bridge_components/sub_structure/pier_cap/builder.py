@@ -1,16 +1,11 @@
 """
-Parametric 3D CAD builder for a hammerhead (trapezoidal) pier cap.
+Parametric 3D CAD builder for a tapered (hammerhead) pier cap.
 
-The cap cross-section is defined in the X-Z plane and extruded along Y (the
-deck-width direction), which is how a hammerhead cap is normally detailed:
+The trapezoidal cross-section lies in the X-Z plane, narrow at the bottom, and
+is extruded along Y, the deck-width direction.
 
-    top width    = 3000 mm
-    bottom width = 1200 mm
-    depth        = 600 mm
-    length       = supplied by the assembly (normally the deck width)
-
-Local frame: origin at the centre of the bottom face, +Z up, +Y along the cap
-length.  The extrusion runs from ``-length/2`` to ``+length/2``.
+Local frame: origin at the centre of the bottom face, +Z up, cap length from
+``-length/2`` to ``+length/2`` along Y.
 """
 
 import math
@@ -23,94 +18,79 @@ from OCC.Core.BRepPrimAPI import BRepPrimAPI_MakePrism
 from OCC.Core.gp import gp_Pnt, gp_Vec
 
 from osdagbridge.core.bridge_components.reinforcement import (
+    REBAR_COVER,
+    REBAR_MAIN_DIAMETER,
+    REBAR_SPACING_LONGITUDINAL,
+    REBAR_SPACING_TRANSVERSE,
+    REBAR_TRANSVERSE_DIAMETER,
     bar_group,
     bars_to_compound,
     line_bar,
+    spread,
+    stations,
 )
 
-# Defaults (mm)
+# Defaults from the screening brief (mm)
 PIER_CAP_TOP_WIDTH = 3000.0
 PIER_CAP_BOTTOM_WIDTH = 1200.0
 PIER_CAP_DEPTH = 600.0
-REBAR_MAIN_DIAMETER = 16.0
-REBAR_SPACING_LONGITUDINAL = 150.0
-REBAR_TRANSVERSE_DIAMETER = 8.0
-REBAR_SPACING_TRANSVERSE = 200.0
-REBAR_COVER = 40.0
 
 
-def _tapered_section(bottom_width, top_width, depth):
-    """Closed polygon in the X-Z plane at y = -length/2."""
-    half_b = bottom_width / 2.0
-    half_t = top_width / 2.0
-    poly = BRepBuilderAPI_MakePolygon()
-    poly.Add(gp_Pnt(-half_b, 0.0, 0.0))
-    poly.Add(gp_Pnt(half_b, 0.0, 0.0))
-    poly.Add(gp_Pnt(half_t, 0.0, depth))
-    poly.Add(gp_Pnt(-half_t, 0.0, depth))
-    poly.Close()
-    return BRepBuilderAPI_MakeFace(poly.Wire()).Face()
-
-
-def _width_at(z, bottom_width, top_width, depth):
-    return bottom_width + (top_width - bottom_width) * (z / depth)
-
-
-def _main_bars(length, bottom_width, top_width, depth, cover, main_d, spacing):
+def inset_half_width(z, inset, bottom_width, top_width, depth):
     """
-    Longitudinal bars run along Y and are spaced across X at a constant Z.
-    Two layers are provided (top and bottom); the tapered section naturally
-    allows fewer bars in the bottom layer.
+    Half-width at height ``z`` of the section offset inwards by ``inset``.
+
+    The sloping faces are offset along their normal, so a horizontal distance
+    of ``inset / cos(slope)`` is removed, not just ``inset``.  Using the plain
+    horizontal value would leave the bars near the top corners with less than
+    the specified cover.
     """
+    run = (top_width - bottom_width) / 2.0
+    half_width = bottom_width / 2.0 + run * z / depth
+    return half_width - inset * math.hypot(depth, run) / depth
+
+
+def _concrete(bottom_width, top_width, depth, length):
+    hb, ht = bottom_width / 2.0, top_width / 2.0
+    y0 = -length / 2.0
+    section = BRepBuilderAPI_MakePolygon()
+    for x, z in ((-hb, 0.0), (hb, 0.0), (ht, depth), (-ht, depth)):
+        section.Add(gp_Pnt(x, y0, z))
+    section.Close()
+    face = BRepBuilderAPI_MakeFace(section.Wire()).Face()
+    return BRepPrimAPI_MakePrism(face, gp_Vec(0.0, float(length), 0.0)).Shape()
+
+
+def _main_bars(length, bottom_width, top_width, depth, cover, main_d, tie_d, spacing):
+    """
+    Top and bottom layers of bars running along the cap, inside the stirrups.
+    The taper leaves room for fewer bars in the bottom layer.
+    """
+    inset = cover + tie_d + main_d / 2.0
+    y1 = -length / 2.0 + cover
+    y2 = length / 2.0 - cover
     bars = []
-    y1 = -length / 2.0 + cover + main_d / 2.0
-    y2 = length / 2.0 - cover - main_d / 2.0
-    for z in (cover + main_d / 2.0, depth - cover - main_d / 2.0):
-        usable_half = _width_at(z, bottom_width, top_width, depth) / 2.0 - cover - main_d / 2.0
-        if usable_half <= 0:
+    for z in (inset, depth - inset):
+        half = inset_half_width(z, inset, bottom_width, top_width, depth)
+        if half < 0.0:
             continue
-        n = int(math.floor((2.0 * usable_half) / spacing)) + 1
-        if n == 1:
-            xs = [0.0]
-        else:
-            xs = [-usable_half + i * (2.0 * usable_half) / (n - 1) for i in range(n)]
-        for x in xs:
+        for x in spread(half, spacing):
             bars.append(line_bar((x, y1, z), (x, y2, z), main_d))
     return bars
 
 
 def _tie_bars(length, bottom_width, top_width, depth, cover, tie_d, spacing):
-    """
-    Trapezoidal closed stirrups at the requested spacing along the cap.
-    Each stirrup is four straight bars following the tapered outline.
-    """
+    """Closed trapezoidal stirrups, four straight legs each, along the cap."""
+    inset = cover + tie_d / 2.0
+    zb, zt = inset, depth - inset
+    xb = inset_half_width(zb, inset, bottom_width, top_width, depth)
+    xt = inset_half_width(zt, inset, bottom_width, top_width, depth)
     bars = []
-    y = -length / 2.0 + cover + tie_d / 2.0
-    while y <= length / 2.0 - cover - tie_d / 2.0 + 1e-6:
-        xb = bottom_width / 2.0 - cover - tie_d / 2.0
-        xt = top_width / 2.0 - cover - tie_d / 2.0
-        zb = cover + tie_d / 2.0
-        zt = depth - cover - tie_d / 2.0
-        corners = [
-            (-xb, y, zb),
-            (xb, y, zb),
-            (xt, y, zt),
-            (-xt, y, zt),
-        ]
+    for y in stations(-length / 2.0 + inset, length / 2.0 - inset, spacing):
+        corners = [(-xb, y, zb), (xb, y, zb), (xt, y, zt), (-xt, y, zt)]
         for i in range(4):
             bars.append(line_bar(corners[i], corners[(i + 1) % 4], tie_d))
-        y += spacing
     return bars
-
-
-def _pier_cap_concrete(bottom_width, top_width, depth, length):
-    section = _tapered_section(bottom_width, top_width, depth)
-    prism = BRepPrimAPI_MakePrism(
-        section, gp_Vec(0.0, float(length), 0.0)
-    ).Shape()
-    # The section sits at y=0; move it so the cap is centred on its origin.
-    from osdagbridge.core.bridge_components.reinforcement import translate
-    return translate(prism, 0.0, -length / 2.0, 0.0)
 
 
 def build_pier_cap(
@@ -127,46 +107,41 @@ def build_pier_cap(
     name="Pier Cap",
 ):
     """Build the trapezoidal cap concrete solid and its reinforcement cage."""
-    if length <= 2.0 * cover:
-        raise ValueError("Pier cap length must be greater than twice the cover")
-    if not (top_width > 0 and bottom_width > 0 and depth > 2.0 * cover):
-        raise ValueError("Invalid pier cap dimensions")
+    if length <= 2.0 * cover or depth <= 2.0 * cover:
+        raise ValueError("Pier cap length and depth must exceed twice the cover")
+    if bottom_width <= 0:
+        raise ValueError("Pier cap widths must be positive")
     if top_width < bottom_width:
-        raise ValueError("Hammerhead cap top width must not be smaller than bottom width")
+        raise ValueError("Pier cap top width must not be smaller than the bottom width")
+    tie_inset = cover + tie_rebar_diameter / 2.0
+    if inset_half_width(tie_inset, tie_inset, bottom_width, top_width, depth) <= 0.0:
+        raise ValueError("Pier cap bottom width is too small for the specified cover")
 
-    concrete = _pier_cap_concrete(bottom_width, top_width, depth, length)
+    concrete = _concrete(bottom_width, top_width, depth, length)
     main_bars = _main_bars(length, bottom_width, top_width, depth, cover,
-                           main_rebar_diameter, main_spacing)
+                           main_rebar_diameter, tie_rebar_diameter, main_spacing)
     tie_bars = _tie_bars(length, bottom_width, top_width, depth, cover,
                          tie_rebar_diameter, tie_spacing)
     bars = main_bars + tie_bars
-    rebar = bars_to_compound(bars)
-
-    bar_groups = [
-        bar_group(f"{name} - Main Bars", main_bars, "MAIN",
-                  main_rebar_diameter, component=name),
-        bar_group(f"{name} - Trapezoidal Ties", tie_bars, "SHEAR",
-                  tie_rebar_diameter, component=name),
-    ]
 
     return {
         "name": name,
-        "kind": "pier_cap",
         "concrete": concrete,
-        "rebar": rebar,
+        "rebar": bars_to_compound(bars),
         "bars": bars,
-        "bar_groups": bar_groups,
+        "bar_groups": [
+            bar_group(f"{name} - Main Bars", main_bars, "MAIN", component=name),
+            bar_group(f"{name} - Stirrups", tie_bars, "SHEAR", component=name),
+        ],
         "meta": {
             "kind": "trapezoid",
             "ifc_class": "IfcBeam",
             "name": name,
-            "origin": [0.0, 0.0, 0.0],
             "bottom_width": float(bottom_width),
             "top_width": float(top_width),
             "depth": float(depth),
             "length": float(length),
             "cover": float(cover),
-            "concrete_grade": "M30",
             "main_bar_diameter": float(main_rebar_diameter),
             "main_spacing": float(main_spacing),
             "tie_bar_diameter": float(tie_rebar_diameter),
